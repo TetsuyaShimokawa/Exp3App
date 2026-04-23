@@ -46,7 +46,16 @@ export default function CTBScreen({ sessionData, trials, trialIndex, onTrialDone
 
     // Fire-and-forget; don't block UI
     saveResult(result)
-    onTrialDone(trialIndex + 1)
+    onTrialDone(trialIndex + 1, {
+      trial_id: trial_id,
+      stake: stake,
+      exchange_rate: exchange_rate,
+      allocation_today: allocationToday,
+      allocation_future: allocationFuture,
+      delay_label: delay_label,
+      delay_condition: delay,
+      response_time_ms: responseTimeMs,
+    })
   }
 
   const totalTrials = trials.length

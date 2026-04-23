@@ -22,8 +22,9 @@ export default function App() {
   // trials is the shuffled list from backend; trialIndex is current position
   const [trials, setTrials] = useState([])
   const [trialIndex, setTrialIndex] = useState(0)
-  // nextStake shown on StakeBreakScreen
   const [nextStake, setNextStake] = useState(null)
+  const [completedTrials, setCompletedTrials] = useState([])
+  const [bdmResult, setBdmResult] = useState(null)
 
   function handleSetupComplete(data) {
     // data: { session_id, delay_condition, delay_label, trials, participant_id, name }
@@ -42,8 +43,21 @@ export default function App() {
   }
 
   // Called after each CTB trial is confirmed
-  function handleTrialDone(newIndex) {
+  function handleTrialDone(newIndex, trialResult) {
+    if (trialResult) {
+      setCompletedTrials((prev) => [...prev, trialResult])
+    }
     if (newIndex >= trials.length) {
+      // Compute BDM: pick one random trial
+      const all = trialResult
+        ? [...completedTrials, trialResult]
+        : completedTrials
+      if (all.length > 0) {
+        const sel = all[Math.floor(Math.random() * all.length)]
+        // Reward = today allocation (participant receives today_amount immediately)
+        const reward = sel.allocation_today
+        setBdmResult({ selected: sel, reward, total: reward + 1000 })
+      }
       setScreen(SCREEN.FINISH)
       return
     }
@@ -98,7 +112,12 @@ export default function App() {
         />
       )}
       {screen === SCREEN.FINISH && (
-        <FinishScreen />
+        <FinishScreen
+          bdmResult={bdmResult}
+          completedTrials={completedTrials}
+          participantId={sessionData?.participant_id}
+          delayLabel={sessionData?.delay_label}
+        />
       )}
     </div>
   )
