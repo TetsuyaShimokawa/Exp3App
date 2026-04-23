@@ -8,6 +8,17 @@ class CTBResult(BaseModel):
     trial_id: int
     stake: int
     exchange_rate: float
-    allocation_today: int    # yen allocated to today
-    allocation_future: int   # yen allocated to future (= stake - allocation_today) × exchange_rate
+    allocation_today: int
+    allocation_future: int
     response_time_ms: int
+
+
+class MPLResult(BaseModel):
+    session_id: str
+    participant_id: str
+    trial_id: int
+    probability: float
+    option_b_amount: int
+    choice: str        # "A" or "B"
+    row_index: int
+    block_index: int

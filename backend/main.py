@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from models.result import CTBResult
-from trial_generator import DELAYS, generate_trials
+from models.result import CTBResult, MPLResult
+from trial_generator import DELAYS, generate_trials, generate_mpl_trials
 
 app = FastAPI(title="Exp3 CTB Backend")
 
@@ -33,7 +33,8 @@ app.add_middleware(
 # In-memory storage
 # ---------------------------------------------------------------------------
 sessions: dict[str, dict[str, Any]] = {}   # session_id -> session info
-results: list[dict[str, Any]] = []          # flat list of all CTB results
+ctb_results: list[dict[str, Any]] = []
+mpl_results: list[dict[str, Any]] = []
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ class StartSessionResponse(BaseModel):
     delay_condition: str
     delay_label: str
     trials: list[dict]
+    mpl_trials: list[dict]
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +68,7 @@ def start_session(req: StartSessionRequest):
 
     session_id = str(uuid.uuid4())
     trials = generate_trials(req.delay_condition)
+    mpl_trials = generate_mpl_trials()
 
     sessions[session_id] = {
         "session_id": session_id,
@@ -81,6 +84,7 @@ def start_session(req: StartSessionRequest):
         delay_condition=req.delay_condition,
         delay_label=DELAYS[req.delay_condition],
         trials=trials,
+        mpl_trials=mpl_trials,
     )
 
 
@@ -94,42 +98,62 @@ def save_result(result: CTBResult):
     record["name"] = session.get("name", "")
     record["delay_label"] = DELAYS.get(result.delay_condition, result.delay_condition)
     record["timestamp"] = datetime.utcnow().isoformat()
-    results.append(record)
+    ctb_results.append(record)
+    return {"status": "ok"}
+
+
+@app.post("/api/mpl/result", status_code=201)
+def save_mpl_result(result: MPLResult):
+    session = sessions.get(result.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    record = result.model_dump()
+    record["name"] = session.get("name", "")
+    record["delay_condition"] = session.get("delay_condition", "")
+    record["timestamp"] = datetime.utcnow().isoformat()
+    mpl_results.append(record)
     return {"status": "ok"}
 
 
 @app.get("/api/results/csv")
 def download_csv():
-    fieldnames = [
-        "participant_id",
-        "name",
-        "delay_condition",
-        "delay_label",
-        "trial_id",
-        "stake",
-        "exchange_rate",
-        "allocation_today",
-        "allocation_future",
-        "response_time_ms",
-        "timestamp",
-    ]
-
     output = io.StringIO()
-    writer = csv.DictWriter(
-        output, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n"
-    )
-    writer.writeheader()
-    writer.writerows(results)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+    # --- CTB results ---
+    ctb_fields = [
+        "participant_id", "name", "delay_condition", "delay_label",
+        "trial_id", "stake", "exchange_rate",
+        "allocation_today", "allocation_future", "response_time_ms", "timestamp",
+    ]
+    w = csv.writer(output)
+    w.writerow(["## CTB RESULTS"])
+    ctb_writer = csv.DictWriter(output, fieldnames=ctb_fields, extrasaction="ignore", lineterminator="\n")
+    ctb_writer.writeheader()
+    ctb_writer.writerows(ctb_results)
+    output.write("\n")
+
+    # --- MPL results ---
+    mpl_fields = [
+        "participant_id", "name", "delay_condition",
+        "trial_id", "block_index", "row_index",
+        "probability", "option_b_amount", "choice", "timestamp",
+    ]
+    w.writerow(["## MPL RESULTS"])
+    mpl_writer = csv.DictWriter(output, fieldnames=mpl_fields, extrasaction="ignore", lineterminator="\n")
+    mpl_writer.writeheader()
+    mpl_writer.writerows(mpl_results)
 
     output.seek(0)
-    filename = f"exp3_ctb_results_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"exp3_results_{ts}.csv"
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
+        iter([output.getvalue().encode("utf-8-sig")]),
+        media_type="text/csv; charset=utf-8-sig",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "sessions": len(sessions), "results": len(results)}
+    return {"status": "ok", "sessions": len(sessions), "ctb_results": len(ctb_results), "mpl_results": len(mpl_results)}

@@ -36,3 +36,17 @@ export async function saveResult(result) {
     console.error('結果の保存に失敗しました', result)
   }
 }
+
+/**
+ * POST /api/mpl/result
+ */
+export async function saveMPLResult(result) {
+  const res = await fetch(`${API_BASE}/api/mpl/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(result),
+  })
+  if (!res.ok) {
+    console.error('MPL結果の保存に失敗しました', result)
+  }
+}
