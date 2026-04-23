@@ -1,160 +1,143 @@
-import React, { useState } from 'react'
-import { saveMPLResult } from '../utils'
+import React, { useState, useEffect, useRef } from 'react'
+import { saveCEResult, formatYen } from '../utils'
 
-export default function MPLScreen({ sessionData, mplTrials, onComplete }) {
-  const blocks = groupIntoBlocks(mplTrials)
+export default function CEScreen({ sessionData, ceTrials, onComplete }) {
+  const blocks = groupIntoBlocks(ceTrials)
   const totalBlocks = blocks.length
 
   const [blockIndex, setBlockIndex] = useState(0)
-  const [choices, setChoices] = useState({})
+  const [trialIndex, setTrialIndex] = useState(0)
+  const [ceAmount, setCeAmount] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [allCollected, setAllCollected] = useState([])
+  const startTimeRef = useRef(Date.now())
 
   const currentBlock = blocks[blockIndex]
   if (!currentBlock) return null
+  const trial = currentBlock[trialIndex]
+  if (!trial) return null
 
-  const probability = currentBlock[0].probability_percent
-  const progressPct = ((blockIndex + 1) / totalBlocks) * 100
-  const answered = currentBlock.filter((t) => choices[t.id]).length
+  useEffect(() => {
+    setCeAmount(Math.round(trial.stake / 2))
+    startTimeRef.current = Date.now()
+  }, [blockIndex, trialIndex])
 
-  function handleChoice(clickedId, choice) {
-    const idx = currentBlock.findIndex((t) => t.id === clickedId)
-    setChoices((prev) => {
-      const next = { ...prev, [clickedId]: choice }
-      if (choice === 'B') {
-        for (let i = idx + 1; i < currentBlock.length; i++)
-          next[currentBlock[i].id] = 'B'
-      } else {
-        for (let i = 0; i < idx; i++)
-          next[currentBlock[i].id] = 'A'
-      }
-      return next
-    })
-  }
+  const totalTrials = ceTrials.length
+  const completedSoFar = blocks.slice(0, blockIndex).reduce((s, b) => s + b.length, 0) + trialIndex
+  const progressPct = (completedSoFar / totalTrials) * 100
 
-  const allAnswered = currentBlock.every((t) => choices[t.id])
-
-  async function handleNext() {
-    if (!allAnswered || submitting) return
+  async function handleConfirm() {
+    if (submitting) return
     setSubmitting(true)
 
+    const result = {
+      session_id: sessionData.session_id,
+      participant_id: sessionData.participant_id,
+      trial_id: trial.trial_id,
+      block: trial.block,
+      stake: trial.stake,
+      probability: trial.probability,
+      ce_amount: ceAmount,
+      response_time_ms: Date.now() - startTimeRef.current,
+    }
+
     try {
-      await Promise.all(
-        currentBlock.map((trial) =>
-          saveMPLResult({
-            session_id: sessionData.session_id,
-            participant_id: sessionData.participant_id,
-            trial_id: trial.id,
-            probability: trial.probability,
-            option_b_amount: trial.option_b_amount,
-            choice: choices[trial.id],
-            row_index: trial.row_index,
-            block_index: trial.block_index,
-          })
-        )
-      )
+      await saveCEResult(result)
     } catch (e) {
-      console.error('MPL save failed:', e)
+      console.error('CE save failed:', e)
     }
 
-    const newCollected = [
-      ...allCollected,
-      ...currentBlock.map((t) => ({
-        id: t.id,
-        probability: t.probability,
-        option_b_amount: t.option_b_amount,
-        choice: choices[t.id],
-      })),
-    ]
-    setAllCollected(newCollected)
+    const updated = [...allCollected, result]
+    setAllCollected(updated)
 
-    if (blockIndex + 1 < totalBlocks) {
-      setBlockIndex(blockIndex + 1)
-      setSubmitting(false)
+    const nextTrial = trialIndex + 1
+    if (nextTrial < currentBlock.length) {
+      setTrialIndex(nextTrial)
     } else {
-      onComplete(newCollected)
+      const nextBlock = blockIndex + 1
+      if (nextBlock < totalBlocks) {
+        setBlockIndex(nextBlock)
+        setTrialIndex(0)
+      } else {
+        onComplete(updated)
+      }
     }
+    setSubmitting(false)
   }
+
+  const step = Math.max(100, Math.round(trial.stake / 100) * 100)
 
   return (
     <div style={s.container}>
+      <div style={s.progressOuter}>
+        <div style={{ ...s.progressInner, width: `${progressPct}%` }} />
+      </div>
+
       <div style={s.card}>
-        {/* Progress */}
-        <div style={s.progressOuter}>
-          <div style={{ ...s.progressInner, width: `${progressPct}%` }} />
-        </div>
-        <div style={s.headerRow}>
-          <span style={s.headerLabel}>問 {blockIndex + 1} / {totalBlocks}</span>
-          <span style={s.headerSub}>（全 {mplTrials.length} 選択）</span>
-        </div>
-
-        {/* Probability badge */}
-        <div style={s.probBadge}>
-          <span style={s.probLabel}>くじの当選確率：</span>
-          <span style={s.probValue}>{probability}%</span>
-        </div>
-
-        <p style={s.hint}>
-          ヒント：AかBをクリックすると上下の行が自動補完されます。変更したい行は押し直せます。
-        </p>
-
-        {/* Table */}
-        <div style={{ overflowX: 'auto' }}>
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.thOpt}>選択肢A（くじ）</th>
-                <th style={s.thBtn}>A</th>
-                <th style={s.thBtn}>B</th>
-                <th style={s.thOpt}>選択肢B（確実）</th>
-              </tr>
-            </thead>
-            <tbody>
-              {currentBlock.map((trial) => {
-                const c = choices[trial.id]
-                return (
-                  <tr
-                    key={trial.id}
-                    style={{ ...s.row, background: c === 'A' ? '#e8f5e9' : c === 'B' ? '#e3f2fd' : 'transparent' }}
-                  >
-                    <td style={s.tdOpt}>
-                      <span style={{ color: '#2e7d32', fontSize: '0.88rem' }}>
-                        {probability}% で <strong>1,000円</strong>
-                      </span>
-                    </td>
-                    <td style={s.tdBtn}>
-                      <button
-                        onClick={() => handleChoice(trial.id, 'A')}
-                        style={{ ...s.btn, background: c === 'A' ? '#2e7d32' : '#e8f5e9', color: c === 'A' ? '#fff' : '#2e7d32', border: '1px solid #2e7d32' }}
-                      >A</button>
-                    </td>
-                    <td style={s.tdBtn}>
-                      <button
-                        onClick={() => handleChoice(trial.id, 'B')}
-                        style={{ ...s.btn, background: c === 'B' ? '#1565c0' : '#e3f2fd', color: c === 'B' ? '#fff' : '#1565c0', border: '1px solid #1565c0' }}
-                      >B</button>
-                    </td>
-                    <td style={s.tdOpt}>
-                      <span style={{ color: '#1565c0', fontSize: '0.88rem' }}>
-                        確実に <strong>{trial.option_b_amount.toLocaleString()}円</strong>
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div style={s.header}>
+          <div style={s.headerItem}>
+            <span style={s.headerLabel}>ブロック</span>
+            <span style={s.headerValue}>{blockIndex + 1} / {totalBlocks}</span>
+          </div>
+          <div style={s.headerDivider} />
+          <div style={s.headerItem}>
+            <span style={s.headerLabel}>問</span>
+            <span style={s.headerValue}>{trialIndex + 1} / {currentBlock.length}</span>
+          </div>
+          <div style={s.headerDivider} />
+          <div style={s.headerItem}>
+            <span style={s.headerLabel}>賭け金</span>
+            <span style={s.headerValue}>{formatYen(trial.stake)}</span>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-          <button
-            onClick={handleNext}
-            disabled={!allAnswered || submitting}
-            style={{ ...s.nextBtn, opacity: (!allAnswered || submitting) ? 0.5 : 1 }}
-          >
-            {blockIndex + 1 < totalBlocks ? '次の問へ →' : '課題完了'}
+        <div style={s.questionBox}>
+          <p style={s.questionText}>
+            <strong>{formatYen(trial.stake)}</strong> を確率{' '}
+            <strong>{trial.probability_percent}%</strong> で獲得できるくじがあります。
+          </p>
+          <p style={s.questionSub}>
+            このくじと同じ価値だと感じる「今すぐ確実にもらえる金額」はいくらですか？
+          </p>
+        </div>
+
+        <div style={s.ceDisplay}>
+          <span style={s.ceLabel}>確実性等価額</span>
+          <span style={s.ceValue}>{formatYen(ceAmount)}</span>
+        </div>
+
+        <div style={s.sliderSection}>
+          <div style={s.sliderLabels}>
+            <span style={{ color: '#666' }}>¥0（くじに価値なし）</span>
+            <span style={{ color: '#1565c0' }}>{formatYen(trial.stake)}（くじと同等）</span>
+          </div>
+          <input
+            style={s.slider}
+            type="range"
+            min={0}
+            max={trial.stake}
+            step={step}
+            value={ceAmount}
+            onChange={(e) => setCeAmount(Number(e.target.value))}
+          />
+        </div>
+
+        <div style={s.fineButtons}>
+          <button style={s.fineBtn} onClick={() => setCeAmount(Math.max(0, ceAmount - step))}>
+            ◀ −{formatYen(step)}
+          </button>
+          <button style={s.fineBtn} onClick={() => setCeAmount(Math.min(trial.stake, ceAmount + step))}>
+            +{formatYen(step)} ▶
           </button>
         </div>
+
+        <button
+          style={{ ...s.confirmBtn, opacity: submitting ? 0.6 : 1 }}
+          onClick={handleConfirm}
+          disabled={submitting}
+        >
+          確定
+        </button>
       </div>
     </div>
   )
@@ -162,38 +145,33 @@ export default function MPLScreen({ sessionData, mplTrials, onComplete }) {
 
 function groupIntoBlocks(trials) {
   const blockMap = new Map()
-  for (const trial of trials) {
-    if (!blockMap.has(trial.block_index)) blockMap.set(trial.block_index, [])
-    blockMap.get(trial.block_index).push(trial)
+  for (const t of trials) {
+    if (!blockMap.has(t.block)) blockMap.set(t.block, [])
+    blockMap.get(t.block).push(t)
   }
-  const seen = [], result = []
-  for (const trial of trials) {
-    if (!seen.includes(trial.block_index)) {
-      seen.push(trial.block_index)
-      result.push(blockMap.get(trial.block_index))
-    }
-  }
-  return result
+  return Array.from(blockMap.values())
 }
 
 const s = {
-  container: { display: 'flex', justifyContent: 'center', alignItems: 'flex-start', minHeight: '100vh', padding: '24px 16px', background: '#f5f5f5' },
-  card: { background: '#fff', padding: '28px 32px', borderRadius: 12, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', maxWidth: 700, width: '100%', display: 'flex', flexDirection: 'column', gap: 14 },
-  progressOuter: { width: '100%', height: 6, background: '#e0e0e0', borderRadius: 3, overflow: 'hidden' },
-  progressInner: { height: '100%', background: '#388e3c', borderRadius: 3, transition: 'width 0.3s' },
-  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  headerLabel: { fontSize: 14, fontWeight: 700, color: '#333' },
-  headerSub: { fontSize: 12, color: '#aaa' },
-  probBadge: { display: 'inline-flex', alignItems: 'center', gap: 8, background: '#e8eaf6', borderRadius: 6, padding: '8px 14px', alignSelf: 'flex-start' },
-  probLabel: { fontSize: 13, color: '#333' },
-  probValue: { fontSize: 22, fontWeight: 700, color: '#1a1a2e' },
-  hint: { fontSize: '0.78rem', color: '#888', margin: 0 },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem' },
-  thOpt: { padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#666', borderBottom: '2px solid #e0e0e0', width: '42%' },
-  thBtn: { padding: '8px 6px', textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#1976d2', borderBottom: '2px solid #e0e0e0', width: '8%' },
-  row: { borderBottom: '1px solid #f0f0f0', transition: 'background 0.1s' },
-  tdOpt: { padding: '8px 12px', textAlign: 'center', verticalAlign: 'middle' },
-  tdBtn: { padding: '8px 6px', textAlign: 'center', verticalAlign: 'middle' },
-  btn: { padding: '4px 14px', borderRadius: 4, cursor: 'pointer', fontWeight: 700, fontSize: '0.88rem' },
-  nextBtn: { padding: '10px 32px', fontSize: 15, fontWeight: 600, backgroundColor: '#388e3c', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' },
+  container: { display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: '100vh', background: '#f0f4f8' },
+  progressOuter: { width: '100%', height: 6, background: '#e0e0e0' },
+  progressInner: { height: '100%', background: '#388e3c', transition: 'width 0.4s' },
+  card: { background: '#fff', borderRadius: 16, padding: '28px 32px', maxWidth: 640, width: '100%', margin: '24px 16px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 20 },
+  header: { display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', paddingBottom: 12, borderBottom: '1px solid #e0e0e0' },
+  headerItem: { display: 'flex', flexDirection: 'column', gap: 2 },
+  headerLabel: { fontSize: 11, fontWeight: 600, color: '#90a4ae', textTransform: 'uppercase' },
+  headerValue: { fontSize: '1rem', fontWeight: 700, color: '#263238' },
+  headerDivider: { width: 1, height: 32, background: '#e0e0e0' },
+  questionBox: { background: '#e8eaf6', borderRadius: 10, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 8 },
+  questionText: { margin: 0, fontSize: '1rem', lineHeight: 1.6, color: '#1a237e' },
+  questionSub: { margin: 0, fontSize: '0.9rem', color: '#455a64' },
+  ceDisplay: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: '#e3f2fd', border: '2px solid #90caf9', borderRadius: 12, padding: '16px' },
+  ceLabel: { fontSize: 12, fontWeight: 700, color: '#1565c0', textTransform: 'uppercase' },
+  ceValue: { fontSize: '2rem', fontWeight: 800, color: '#1565c0' },
+  sliderSection: { display: 'flex', flexDirection: 'column', gap: 8 },
+  sliderLabels: { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#90a4ae' },
+  slider: { width: '100%', accentColor: '#1565c0', cursor: 'pointer' },
+  fineButtons: { display: 'flex', gap: 12 },
+  fineBtn: { flex: 1, padding: '8px', fontSize: 13, fontWeight: 600, background: '#f5f5f5', border: '1px solid #cfd8dc', borderRadius: 8, cursor: 'pointer' },
+  confirmBtn: { padding: '14px', fontSize: 16, fontWeight: 700, background: '#388e3c', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer' },
 }

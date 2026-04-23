@@ -13,12 +13,12 @@ class CTBResult(BaseModel):
     response_time_ms: int
 
 
-class MPLResult(BaseModel):
+class CEResult(BaseModel):
     session_id: str
     participant_id: str
     trial_id: int
+    block: int
+    stake: int
     probability: float
-    option_b_amount: int
-    choice: str        # "A" or "B"
-    row_index: int
-    block_index: int
+    ce_amount: int
+    response_time_ms: int

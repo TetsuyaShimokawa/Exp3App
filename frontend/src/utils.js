@@ -1,20 +1,14 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
-/**
- * Format a yen amount with commas, e.g. 10000 → "¥10,000"
- */
 export function formatYen(amount) {
   return '¥' + Number(amount).toLocaleString('ja-JP')
 }
 
-/**
- * POST /api/session/start
- */
-export async function startSession({ participant_id, name, delay_condition }) {
+export async function startSession({ participant_id, name }) {
   const res = await fetch(`${API_BASE}/api/session/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ participant_id, name, delay_condition }),
+    body: JSON.stringify({ participant_id, name }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
@@ -23,9 +17,6 @@ export async function startSession({ participant_id, name, delay_condition }) {
   return res.json()
 }
 
-/**
- * POST /api/results
- */
 export async function saveResult(result) {
   const res = await fetch(`${API_BASE}/api/results`, {
     method: 'POST',
@@ -37,16 +28,13 @@ export async function saveResult(result) {
   }
 }
 
-/**
- * POST /api/mpl/result
- */
-export async function saveMPLResult(result) {
-  const res = await fetch(`${API_BASE}/api/mpl/result`, {
+export async function saveCEResult(result) {
+  const res = await fetch(`${API_BASE}/api/ce/result`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(result),
   })
   if (!res.ok) {
-    console.error('MPL結果の保存に失敗しました', result)
+    console.error('CE結果の保存に失敗しました', result)
   }
 }

@@ -1,5 +1,6 @@
 import csv
 import io
+import random
 import uuid
 from datetime import datetime
 from typing import Any
@@ -9,14 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from models.result import CTBResult, MPLResult
-from trial_generator import DELAYS, generate_trials, generate_mpl_trials
+from models.result import CTBResult, CEResult
+from trial_generator import DELAYS, generate_trials, generate_ce_trials
 
-app = FastAPI(title="Exp3 CTB Backend")
+app = FastAPI(title="Exp3 CTB + CE Backend")
 
-# ---------------------------------------------------------------------------
-# CORS
-# ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -29,21 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# In-memory storage
-# ---------------------------------------------------------------------------
-sessions: dict[str, dict[str, Any]] = {}   # session_id -> session info
+sessions: dict[str, dict[str, Any]] = {}
 ctb_results: list[dict[str, Any]] = []
-mpl_results: list[dict[str, Any]] = []
+ce_results: list[dict[str, Any]] = []
 
 
-# ---------------------------------------------------------------------------
-# Request / response schemas
-# ---------------------------------------------------------------------------
 class StartSessionRequest(BaseModel):
     participant_id: str
     name: str
-    delay_condition: str  # "1week" | "3months" | "2years"
 
 
 class StartSessionResponse(BaseModel):
@@ -51,49 +42,39 @@ class StartSessionResponse(BaseModel):
     delay_condition: str
     delay_label: str
     trials: list[dict]
-    mpl_trials: list[dict]
+    ce_trials: list[dict]
 
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @app.post("/api/session/start", response_model=StartSessionResponse)
 def start_session(req: StartSessionRequest):
-    if req.delay_condition not in DELAYS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"delay_condition must be one of {list(DELAYS.keys())}",
-        )
-
     session_id = str(uuid.uuid4())
-    trials = generate_trials(req.delay_condition)
-    mpl_trials = generate_mpl_trials()
+    delay_condition = random.choice(list(DELAYS.keys()))
+    trials = generate_trials(delay_condition)
+    ce_trials = generate_ce_trials()
 
     sessions[session_id] = {
         "session_id": session_id,
         "participant_id": req.participant_id,
         "name": req.name,
-        "delay_condition": req.delay_condition,
-        "delay_label": DELAYS[req.delay_condition],
+        "delay_condition": delay_condition,
+        "delay_label": DELAYS[delay_condition],
         "started_at": datetime.utcnow().isoformat(),
     }
 
     return StartSessionResponse(
         session_id=session_id,
-        delay_condition=req.delay_condition,
-        delay_label=DELAYS[req.delay_condition],
+        delay_condition=delay_condition,
+        delay_label=DELAYS[delay_condition],
         trials=trials,
-        mpl_trials=mpl_trials,
+        ce_trials=ce_trials,
     )
 
 
 @app.post("/api/results", status_code=201)
-def save_result(result: CTBResult):
+def save_ctb_result(result: CTBResult):
     session = sessions.get(result.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
     record = result.model_dump()
     record["name"] = session.get("name", "")
     record["delay_label"] = DELAYS.get(result.delay_condition, result.delay_condition)
@@ -102,17 +83,16 @@ def save_result(result: CTBResult):
     return {"status": "ok"}
 
 
-@app.post("/api/mpl/result", status_code=201)
-def save_mpl_result(result: MPLResult):
+@app.post("/api/ce/result", status_code=201)
+def save_ce_result(result: CEResult):
     session = sessions.get(result.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
     record = result.model_dump()
     record["name"] = session.get("name", "")
     record["delay_condition"] = session.get("delay_condition", "")
     record["timestamp"] = datetime.utcnow().isoformat()
-    mpl_results.append(record)
+    ce_results.append(record)
     return {"status": "ok"}
 
 
@@ -121,7 +101,6 @@ def download_csv():
     output = io.StringIO()
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
-    # --- CTB results ---
     ctb_fields = [
         "participant_id", "name", "delay_condition", "delay_label",
         "trial_id", "stake", "exchange_rate",
@@ -134,16 +113,14 @@ def download_csv():
     ctb_writer.writerows(ctb_results)
     output.write("\n")
 
-    # --- MPL results ---
-    mpl_fields = [
+    ce_fields = [
         "participant_id", "name", "delay_condition",
-        "trial_id", "block_index", "row_index",
-        "probability", "option_b_amount", "choice", "timestamp",
+        "trial_id", "block", "stake", "probability", "ce_amount", "response_time_ms", "timestamp",
     ]
-    w.writerow(["## MPL RESULTS"])
-    mpl_writer = csv.DictWriter(output, fieldnames=mpl_fields, extrasaction="ignore", lineterminator="\n")
-    mpl_writer.writeheader()
-    mpl_writer.writerows(mpl_results)
+    w.writerow(["## CE RESULTS"])
+    ce_writer = csv.DictWriter(output, fieldnames=ce_fields, extrasaction="ignore", lineterminator="\n")
+    ce_writer.writeheader()
+    ce_writer.writerows(ce_results)
 
     output.seek(0)
     filename = f"exp3_results_{ts}.csv"
@@ -156,4 +133,9 @@ def download_csv():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "sessions": len(sessions), "ctb_results": len(ctb_results), "mpl_results": len(mpl_results)}
+    return {
+        "status": "ok",
+        "sessions": len(sessions),
+        "ctb_results": len(ctb_results),
+        "ce_results": len(ce_results),
+    }
